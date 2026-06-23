@@ -139,6 +139,7 @@ namespace flutter_inappwebview_plugin
       double x, double y, double size, double pressure);
     void setPointerButtonState(InAppWebViewPointerEventKind kind, InAppWebViewPointerButton button);
     void sendScroll(double offset, bool horizontal);
+    void sendScrollViaCdp(double delta_x, double delta_y);
     void setScrollDelta(double delta_x, double delta_y);
     void onSurfaceSizeChanged(SurfaceSizeChangedCallback callback)
     {

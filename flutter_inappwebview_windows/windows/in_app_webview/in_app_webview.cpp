@@ -1,4 +1,5 @@
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <limits>
@@ -54,6 +55,18 @@
 namespace flutter_inappwebview_plugin
 {
   using namespace Microsoft::WRL;
+
+  namespace
+  {
+    constexpr double kWheelDelta = 120.0;
+    constexpr double kChromiumWheelPixelsPerNotch = 100.0;
+
+    bool isCdpScrollEnabled()
+    {
+      const auto value = std::getenv("OTZARIA_WEBVIEW_SCROLL_VIA_CDP");
+      return value != nullptr && std::strcmp(value, "1") == 0;
+    }
+  }
 
   InAppWebView::InAppWebView(const FlutterInappwebviewWindowsPlugin* plugin, const InAppWebViewCreationParams& params, const HWND parentWindow, wil::com_ptr<ICoreWebView2Environment> webViewEnv,
     wil::com_ptr<ICoreWebView2Controller> webViewController,
@@ -3817,9 +3830,41 @@ namespace flutter_inappwebview_plugin
     }
   }
 
+  void InAppWebView::sendScrollViaCdp(double delta_x, double delta_y)
+  {
+    if (!webView) {
+      return;
+    }
+
+    const auto wheelUnitsToPixels = kChromiumWheelPixelsPerNotch / kWheelDelta;
+    nlohmann::json parameters = {
+      { "type", "mouseWheel" },
+      { "x", lastCursorPos_.x / scaleFactor_ },
+      { "y", lastCursorPos_.y / scaleFactor_ },
+      { "deltaX", -delta_x * settings->scrollMultiplier * wheelUnitsToPixels },
+      { "deltaY", -delta_y * settings->scrollMultiplier * wheelUnitsToPixels }
+    };
+
+    webView->CallDevToolsProtocolMethod(
+      L"Input.dispatchMouseEvent",
+      utf8_to_wide(parameters.dump()).c_str(),
+      Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+        [](HRESULT errorCode, LPCWSTR)
+        {
+          failedLog(errorCode);
+          return S_OK;
+        }
+      ).Get());
+  }
+
   void InAppWebView::setScrollDelta(double delta_x, double delta_y)
   {
     if (!webViewCompositionController) {
+      return;
+    }
+
+    if (isCdpScrollEnabled()) {
+      sendScrollViaCdp(delta_x, delta_y);
       return;
     }
 
