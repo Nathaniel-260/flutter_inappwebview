@@ -486,6 +486,33 @@ The following files are automatically copied to your app's `lib/` directory:
 - `libWPEBackend-fdo-1.0.so.*` - FDO backend library
 - `libWPEBackend-default.so` - Symlink to FDO backend
 
+## Self-Contained Bundling (running without a system WPE install)
+
+WPE WebKit is multi-process. In addition to the `.so` files above, `libWPEWebKit`
+spawns helper processes and loads an injected bundle, whose locations are baked
+into the library as absolute paths (`PKGLIBEXECDIR`, `PKGLIBDIR`). Bundling only
+the libraries is therefore not enough for a machine without WPE installed — the
+app fails with `Failed to spawn child process '.../WPENetworkProcess'`.
+
+When available at build time, the plugin also bundles these files into `lib/`:
+
+- `WPEWebProcess`, `WPENetworkProcess` (and `WPEGPUProcess` if present) - helper processes
+- `libWPEInjectedBundle.so` - injected bundle
+
+At startup, before any WebView is created, the plugin points WebKit at the
+bundled copies via environment variables:
+
+- `WEBKIT_INJECTED_BUNDLE_PATH` - honored by all WebKit builds.
+- `WEBKIT_EXEC_PATH` (helper processes) - **only honored when `libWPEWebKit` was
+  built with `-DDEVELOPER_MODE=ON`.** A stock distro (Debian/Ubuntu) release
+  build ignores it and always uses the compile-time `PKGLIBEXECDIR`. To ship a
+  self-contained app you must build WPE WebKit from source with
+  `-DDEVELOPER_MODE=ON` (see the source-build section above). Without it, the app
+  still requires the system helper processes to be installed.
+
+If any of these files are missing at build time, or the paths are already set,
+the plugin falls back silently to the system WPE install (existing behavior).
+
 ## Architecture
 
 ```
