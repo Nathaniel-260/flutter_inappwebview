@@ -393,6 +393,7 @@ endforeach()
 list(REMOVE_DUPLICATES WPE_LIBEXEC_CANDIDATES)
 
 # Helper to find an installed file across candidate dirs and add it to the bundle list.
+# Pass OPTIONAL as a 4th argument for files whose absence does not disable bundling.
 function(find_and_add_file FILE_NAME SEARCH_PATHS OUT_LIST)
   foreach(SEARCH_PATH ${SEARCH_PATHS})
     if(EXISTS "${SEARCH_PATH}/${FILE_NAME}")
@@ -402,13 +403,17 @@ function(find_and_add_file FILE_NAME SEARCH_PATHS OUT_LIST)
       return()
     endif()
   endforeach()
-  message(STATUS "flutter_inappwebview_linux: ${FILE_NAME} not found; app will fall back to system WPE")
+  if(${ARGC} GREATER 3 AND "${ARGV3}" STREQUAL "OPTIONAL")
+    message(STATUS "flutter_inappwebview_linux: optional ${FILE_NAME} not found; skipping")
+  else()
+    message(STATUS "flutter_inappwebview_linux: ${FILE_NAME} not found; app will fall back to system WPE")
+  endif()
 endfunction()
 
 # Helper processes. WPEGPUProcess only exists when the GPU process is enabled.
 find_and_add_file("WPEWebProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
 find_and_add_file("WPENetworkProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
-find_and_add_file("WPEGPUProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
+find_and_add_file("WPEGPUProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS OPTIONAL)
 
 # Injected bundle (libWPEInjectedBundle.so) lives in PKGLIBDIR/injected-bundle.
 set(WPE_INJECTED_BUNDLE_CANDIDATES "")

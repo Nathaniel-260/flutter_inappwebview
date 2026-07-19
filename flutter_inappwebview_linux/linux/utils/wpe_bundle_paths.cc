@@ -63,6 +63,13 @@ void PrependLibraryPath(const std::string& dir) {
 }  // namespace
 
 void ConfigureBundledWebKitPaths() {
+  // An explicit developer override wins outright; also skip the LD_LIBRARY_PATH
+  // change so a custom setup is left untouched.
+  if (g_getenv("WEBKIT_EXEC_PATH") != nullptr ||
+      g_getenv("WEBKIT_INJECTED_BUNDLE_PATH") != nullptr) {
+    return;
+  }
+
   const std::string bundleDir = PluginBundleDirectory();
   if (bundleDir.empty()) {
     return;
@@ -79,7 +86,6 @@ void ConfigureBundledWebKitPaths() {
     return;
   }
 
-  // overwrite=FALSE: respect an explicit developer override.
   g_setenv("WEBKIT_EXEC_PATH", bundleDir.c_str(), FALSE);
   PrependLibraryPath(bundleDir);
   debugLog("Using bundled WPE helper processes from " + bundleDir);
