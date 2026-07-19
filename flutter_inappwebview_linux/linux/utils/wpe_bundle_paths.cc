@@ -1,11 +1,13 @@
-#include "wpe_bundle_paths.h"
-
 // dladdr is a GNU extension declared only under _GNU_SOURCE.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+
+#include "wpe_bundle_paths.h"
+
 #include <dlfcn.h>
 #include <glib.h>
+#include <glib/gstdio.h>
 
 #include <string>
 
@@ -29,16 +31,33 @@ std::string PluginBundleDirectory() {
   return result;
 }
 
-bool FileExists(const std::string& path) {
-  return g_file_test(path.c_str(), G_FILE_TEST_EXISTS);
+// A bundled file is installed via CMake install(FILES), which drops the exec bit,
+// so restore it before use. Silently ignores chmod failures (e.g. read-only mount)
+// and reports whether the file ends up runnable.
+bool EnsureExecutable(const std::string& path) {
+  if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) {
+    return false;
+  }
+  if (!g_file_test(path.c_str(), G_FILE_TEST_IS_EXECUTABLE)) {
+    g_chmod(path.c_str(), 0755);
+  }
+  return g_file_test(path.c_str(), G_FILE_TEST_IS_EXECUTABLE);
 }
 
 // Prepend dir to LD_LIBRARY_PATH so spawned helper processes resolve the bundled
 // libWPEWebKit; their own RPATH points at the (absent) system install dir.
+// Idempotent: register_with_registrar may run once per FlView.
 void PrependLibraryPath(const std::string& dir) {
   const char* current = g_getenv("LD_LIBRARY_PATH");
-  std::string value = current && *current ? dir + ":" + current : dir;
-  g_setenv("LD_LIBRARY_PATH", value.c_str(), TRUE);
+  if (current && *current) {
+    const std::string path(current);
+    if (path == dir || path.rfind(dir + ":", 0) == 0) {
+      return;
+    }
+    g_setenv("LD_LIBRARY_PATH", (dir + ":" + path).c_str(), TRUE);
+  } else {
+    g_setenv("LD_LIBRARY_PATH", dir.c_str(), TRUE);
+  }
 }
 
 }  // namespace
@@ -49,18 +68,25 @@ void ConfigureBundledWebKitPaths() {
     return;
   }
 
-  // Helper processes: both are required, so only redirect when both are present.
-  const std::string webProcess = bundleDir + "/WPEWebProcess";
-  const std::string networkProcess = bundleDir + "/WPENetworkProcess";
-  if (FileExists(webProcess) && FileExists(networkProcess)) {
-    // overwrite=FALSE: respect an explicit developer override.
-    g_setenv("WEBKIT_EXEC_PATH", bundleDir.c_str(), FALSE);
-    PrependLibraryPath(bundleDir);
-    debugLog("Using bundled WPE helper processes from " + bundleDir);
+  // WPEGPUProcess is optional (only when the GPU process is enabled), but still
+  // needs its exec bit restored when present.
+  EnsureExecutable(bundleDir + "/WPEGPUProcess");
+
+  // Both helper processes are required; only redirect when both are runnable.
+  const bool useBundled = EnsureExecutable(bundleDir + "/WPEWebProcess") &&
+                          EnsureExecutable(bundleDir + "/WPENetworkProcess");
+  if (!useBundled) {
+    return;
   }
 
-  // Injected bundle: WEBKIT_INJECTED_BUNDLE_PATH is a directory, honored by all builds.
-  if (FileExists(bundleDir + "/libWPEInjectedBundle.so")) {
+  // overwrite=FALSE: respect an explicit developer override.
+  g_setenv("WEBKIT_EXEC_PATH", bundleDir.c_str(), FALSE);
+  PrependLibraryPath(bundleDir);
+  debugLog("Using bundled WPE helper processes from " + bundleDir);
+
+  // Inject the bundled injected-bundle only on the bundled path: pairing a
+  // bundled bundle with a system web process risks an ABI mismatch.
+  if (g_file_test((bundleDir + "/libWPEInjectedBundle.so").c_str(), G_FILE_TEST_EXISTS)) {
     g_setenv("WEBKIT_INJECTED_BUNDLE_PATH", bundleDir.c_str(), FALSE);
     debugLog("Using bundled WPE injected bundle from " + bundleDir);
   }

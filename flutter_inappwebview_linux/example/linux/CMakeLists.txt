@@ -103,9 +103,17 @@ install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
-  install(FILES "${bundled_library}"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-    COMPONENT Runtime)
+  get_filename_component(bundled_name "${bundled_library}" NAME)
+  # WPE helper processes must stay executable; install(FILES) would drop the bit.
+  if(bundled_name MATCHES "^WPE.*Process$")
+    install(PROGRAMS "${bundled_library}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  else()
+    install(FILES "${bundled_library}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  endif()
 endforeach(bundled_library)
 
 # === WPE Library Symlink Creation ===

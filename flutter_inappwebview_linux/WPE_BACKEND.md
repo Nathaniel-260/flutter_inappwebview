@@ -499,19 +499,25 @@ When available at build time, the plugin also bundles these files into `lib/`:
 - `WPEWebProcess`, `WPENetworkProcess` (and `WPEGPUProcess` if present) - helper processes
 - `libWPEInjectedBundle.so` - injected bundle
 
-At startup, before any WebView is created, the plugin points WebKit at the
-bundled copies via environment variables:
+At startup, before any WebView is created, the plugin resolves its own directory
+(via `dladdr`), restores the execute bit on the helper processes (an app's
+`install(FILES)` step drops it), and — only when both helper processes are
+present and runnable — points WebKit at the bundled copies via environment
+variables:
 
-- `WEBKIT_INJECTED_BUNDLE_PATH` - honored by all WebKit builds.
 - `WEBKIT_EXEC_PATH` (helper processes) - **only honored when `libWPEWebKit` was
   built with `-DDEVELOPER_MODE=ON`.** A stock distro (Debian/Ubuntu) release
   build ignores it and always uses the compile-time `PKGLIBEXECDIR`. To ship a
   self-contained app you must build WPE WebKit from source with
   `-DDEVELOPER_MODE=ON` (see the source-build section above). Without it, the app
   still requires the system helper processes to be installed.
+- `WEBKIT_INJECTED_BUNDLE_PATH` - honored by all WebKit builds, but set **only on
+  the bundled path** (i.e. alongside the bundled helper processes). Pairing a
+  bundled injected bundle with a system web process could cause an ABI mismatch.
 
-If any of these files are missing at build time, or the paths are already set,
-the plugin falls back silently to the system WPE install (existing behavior).
+If the helper processes are missing/non-executable at runtime, or the paths are
+already set, the plugin falls back silently to the system WPE install (existing
+behavior) and leaves the injected bundle untouched.
 
 ## Architecture
 
