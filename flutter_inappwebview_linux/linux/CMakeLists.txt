@@ -43,19 +43,27 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
 message(STATUS "flutter_inappwebview_linux: Using WPE WebKit backend")
 
-# Try wpe-webkit-2.0 first (newer API), fall back to wpe-webkit-1.1, then wpe-webkit-1.0
+# Try wpe-webkit-2.0 first (newer API), fall back to wpe-webkit-1.1, then wpe-webkit-1.0.
+# WPE_WEBKIT_PC_MODULE / WPE_API_VERSION are reused below to locate the helper
+# processes and injected bundle (their install dirs are named wpe-webkit-<API>).
 pkg_check_modules(WPE_WEBKIT QUIET IMPORTED_TARGET wpe-webkit-2.0)
 if(NOT WPE_WEBKIT_FOUND)
   pkg_check_modules(WPE_WEBKIT QUIET IMPORTED_TARGET wpe-webkit-1.1)
   if(WPE_WEBKIT_FOUND)
+    set(WPE_WEBKIT_PC_MODULE "wpe-webkit-1.1")
+    set(WPE_API_VERSION "1.1")
     message(STATUS "flutter_inappwebview_linux: Found wpe-webkit-1.1 (${WPE_WEBKIT_VERSION})")
   else()
     pkg_check_modules(WPE_WEBKIT QUIET IMPORTED_TARGET wpe-webkit-1.0)
     if(WPE_WEBKIT_FOUND)
+      set(WPE_WEBKIT_PC_MODULE "wpe-webkit-1.0")
+      set(WPE_API_VERSION "1.0")
       message(STATUS "flutter_inappwebview_linux: Found wpe-webkit-1.0 (${WPE_WEBKIT_VERSION})")
     endif()
   endif()
 else()
+  set(WPE_WEBKIT_PC_MODULE "wpe-webkit-2.0")
+  set(WPE_API_VERSION "2.0")
   message(STATUS "flutter_inappwebview_linux: Found wpe-webkit-2.0 (${WPE_WEBKIT_VERSION})")
 endif()
 
@@ -175,6 +183,7 @@ list(APPEND PLUGIN_SOURCES
   "credential_database.cc"
   "proxy_manager.cc"
   "utils/software_rendering.cc"
+  "utils/wpe_bundle_paths.cc"
   "web_storage_manager.cc"
   "webview_environment.cc"
   "content_blocker/content_blocker_handler.cc"
@@ -280,6 +289,8 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::WPE_WEBKIT)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::LIBWPE)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::WAYLAND_SERVER)
 target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::LIBSECRET)
+# ${CMAKE_DL_LIBS} provides dladdr (used to locate the bundled helper processes).
+target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_DL_LIBS})
 
 # Link WPEPlatform if available (new API - default)
 if(HAVE_WPE_PLATFORM)
@@ -360,6 +371,56 @@ endif()
 # Also need to create symlinks for the sonames that the libraries expect
 # This will be handled at install time in the example CMakeLists.txt
 
+# === Self-contained helper processes and injected bundle ===
+# WPE WebKit is multi-process: libWPEWebKit spawns WPEWebProcess/WPENetworkProcess
+# and loads libWPEInjectedBundle.so. Their locations are baked into the library as
+# absolute PKGLIBEXECDIR/PKGLIBDIR paths, so bundling only the .so files is not
+# enough to run on a machine without WPE installed. Stage these extra files into
+# the app bundle; utils/wpe_bundle_paths.cc redirects WebKit to them at runtime.
+
+# Derive install prefix/libdir from the WPE WebKit .pc file to build candidate dirs.
+pkg_get_variable(WPE_WEBKIT_PREFIX "${WPE_WEBKIT_PC_MODULE}" prefix)
+pkg_get_variable(WPE_WEBKIT_LIBDIR "${WPE_WEBKIT_PC_MODULE}" libdir)
+
+# Candidate directories for the helper processes (PKGLIBEXECDIR varies by distro).
+set(WPE_LIBEXEC_CANDIDATES "")
+foreach(BASE "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/libexec" "${WPE_WEBKIT_PREFIX}/lib"
+             "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/libexec" "/usr/lib")
+  if(BASE)
+    list(APPEND WPE_LIBEXEC_CANDIDATES "${BASE}/wpe-webkit-${WPE_API_VERSION}" "${BASE}")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES WPE_LIBEXEC_CANDIDATES)
+
+# Helper to find an installed file across candidate dirs and add it to the bundle list.
+function(find_and_add_file FILE_NAME SEARCH_PATHS OUT_LIST)
+  foreach(SEARCH_PATH ${SEARCH_PATHS})
+    if(EXISTS "${SEARCH_PATH}/${FILE_NAME}")
+      list(APPEND ${OUT_LIST} "${SEARCH_PATH}/${FILE_NAME}")
+      set(${OUT_LIST} ${${OUT_LIST}} PARENT_SCOPE)
+      message(STATUS "flutter_inappwebview_linux: Will bundle ${SEARCH_PATH}/${FILE_NAME}")
+      return()
+    endif()
+  endforeach()
+  message(STATUS "flutter_inappwebview_linux: ${FILE_NAME} not found; app will fall back to system WPE")
+endfunction()
+
+# Helper processes. WPEGPUProcess only exists when the GPU process is enabled.
+find_and_add_file("WPEWebProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
+find_and_add_file("WPENetworkProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
+find_and_add_file("WPEGPUProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
+
+# Injected bundle (libWPEInjectedBundle.so) lives in PKGLIBDIR/injected-bundle.
+set(WPE_INJECTED_BUNDLE_CANDIDATES "")
+foreach(BASE "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/lib"
+             "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/lib")
+  if(BASE)
+    list(APPEND WPE_INJECTED_BUNDLE_CANDIDATES "${BASE}/wpe-webkit-${WPE_API_VERSION}/injected-bundle")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES WPE_INJECTED_BUNDLE_CANDIDATES)
+find_and_add_file("libWPEInjectedBundle.so" "${WPE_INJECTED_BUNDLE_CANDIDATES}" WPE_BUNDLED_LIBS)
+
 set(flutter_inappwebview_linux_bundled_libraries
   ${WPE_BUNDLED_LIBS}
   PARENT_SCOPE
@@ -413,6 +474,7 @@ target_link_libraries(${TEST_RUNNER} PRIVATE PkgConfig::WPE_WEBKIT)
 target_link_libraries(${TEST_RUNNER} PRIVATE PkgConfig::LIBWPE)
 target_link_libraries(${TEST_RUNNER} PRIVATE PkgConfig::WAYLAND_SERVER)
 target_link_libraries(${TEST_RUNNER} PRIVATE PkgConfig::LIBSECRET)
+target_link_libraries(${TEST_RUNNER} PRIVATE ${CMAKE_DL_LIBS})
 if(HAVE_WPE_PLATFORM)
   target_link_libraries(${TEST_RUNNER} PRIVATE PkgConfig::WPE_PLATFORM)
   target_link_libraries(${TEST_RUNNER} PRIVATE PkgConfig::WPE_PLATFORM_HEADLESS)
