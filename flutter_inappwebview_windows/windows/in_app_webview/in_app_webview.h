@@ -140,6 +140,8 @@ namespace flutter_inappwebview_plugin
     void setPointerButtonState(InAppWebViewPointerEventKind kind, InAppWebViewPointerButton button);
     void sendScroll(double offset, bool horizontal);
     void setScrollDelta(double delta_x, double delta_y);
+    void requestFocus();
+    void clearFocus();
     void onSurfaceSizeChanged(SurfaceSizeChangedCallback callback)
     {
       surfaceSizeChangedCallback_ = std::move(callback);
@@ -150,6 +152,10 @@ namespace flutter_inappwebview_plugin
     }
     bool createSurface(const HWND parentWindow,
       winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor> compositor);
+    // Widget origin and size inside the Flutter view, physical pixels —
+    // used by WebViewDropTarget to route OLE drag events to this webview.
+    POINT widgetOffset() const { return widgetOffset_; }
+    SIZE surfaceSize() const { return surfaceSize_; }
 
     void initChannel(const std::optional<std::variant<std::string, int64_t>> viewId, const std::optional<std::string> channelName);
     void prepare(const InAppWebViewCreationParams& params);
@@ -251,6 +257,8 @@ namespace flutter_inappwebview_plugin
     CursorChangedCallback cursorChangedCallback_;
     float scaleFactor_ = 1.0;
     POINT lastCursorPos_ = { 0, 0 };
+    POINT widgetOffset_ = { 0, 0 };
+    SIZE surfaceSize_ = { 0, 0 };
     VirtualKeyState virtualKeys_;
 
     const std::string expectedBridgeSecret = get_uuid();
