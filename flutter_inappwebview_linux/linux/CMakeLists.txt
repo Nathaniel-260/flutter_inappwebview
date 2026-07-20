@@ -84,7 +84,9 @@ if(WPE_PLATFORM_FOUND AND WPE_PLATFORM_HEADLESS_FOUND)
   # This happens when WPE WebKit is rebuilt without WPEPlatform support
   include(CheckCXXSourceCompiles)
   set(CMAKE_REQUIRED_INCLUDES ${WPE_WEBKIT_INCLUDE_DIRS} ${WPE_PLATFORM_INCLUDE_DIRS})
-  set(CMAKE_REQUIRED_LIBRARIES ${WPE_WEBKIT_LIBRARIES} ${WPE_PLATFORM_LIBRARIES})
+  # _LINK_LIBRARIES (absolute paths): bare -l names fail against a non-system
+  # prefix (e.g. /opt/wpe-sdk) because the probe gets no -L directories.
+  set(CMAKE_REQUIRED_LIBRARIES ${WPE_WEBKIT_LINK_LIBRARIES} ${WPE_PLATFORM_LINK_LIBRARIES})
   check_cxx_source_compiles("
     #include <wpe/webkit.h>
     int main() {
