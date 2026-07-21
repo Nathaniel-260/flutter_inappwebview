@@ -13,9 +13,11 @@ namespace flutter_inappwebview_plugin {
 // created, because WebKit reads these paths (and the child processes inherit the
 // environment) only at initialization time.
 //
-// Note: WEBKIT_INJECTED_BUNDLE_PATH is honored by all WebKit builds, but
-// WEBKIT_EXEC_PATH (helper processes) only takes effect when libWPEWebKit was
-// built with DEVELOPER_MODE. Falls back silently to the system install otherwise.
+// All-or-nothing: the bundled path is activated only when WPEWebProcess,
+// WPENetworkProcess and libWPEInjectedBundle.so are all present and runnable
+// (plus WPEGPUProcess when it exists) — a partial redirect would mix bundled
+// and compile-time paths. Note: WEBKIT_EXEC_PATH only takes effect when
+// libWPEWebKit was built with DEVELOPER_MODE; falls back silently otherwise.
 void ConfigureBundledWebKitPaths();
 
 }  // namespace flutter_inappwebview_plugin

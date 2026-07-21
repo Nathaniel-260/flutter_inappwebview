@@ -75,27 +75,28 @@ void ConfigureBundledWebKitPaths() {
     return;
   }
 
-  // WPEGPUProcess is optional (only when the GPU process is enabled), but still
-  // needs its exec bit restored when present.
-  EnsureExecutable(bundleDir + "/WPEGPUProcess");
+  // All-or-nothing: with WEBKIT_EXEC_PATH set but no runnable injected bundle
+  // beside it, WebKit falls back to the compile-time PKGLIBDIR bundle — absent
+  // or version-mismatched on a clean machine. Validate the full set first.
+  bool useBundled = EnsureExecutable(bundleDir + "/WPEWebProcess") &&
+                    EnsureExecutable(bundleDir + "/WPENetworkProcess") &&
+                    g_file_test((bundleDir + "/libWPEInjectedBundle.so").c_str(),
+                                G_FILE_TEST_EXISTS);
 
-  // Both helper processes are required; only redirect when both are runnable.
-  const bool useBundled = EnsureExecutable(bundleDir + "/WPEWebProcess") &&
-                          EnsureExecutable(bundleDir + "/WPENetworkProcess");
+  // WPEGPUProcess is optional, but when present it must be runnable too.
+  if (useBundled &&
+      g_file_test((bundleDir + "/WPEGPUProcess").c_str(), G_FILE_TEST_EXISTS)) {
+    useBundled = EnsureExecutable(bundleDir + "/WPEGPUProcess");
+  }
   if (!useBundled) {
     return;
   }
 
   g_setenv("WEBKIT_EXEC_PATH", bundleDir.c_str(), FALSE);
+  g_setenv("WEBKIT_INJECTED_BUNDLE_PATH", bundleDir.c_str(), FALSE);
   PrependLibraryPath(bundleDir);
-  debugLog("Using bundled WPE helper processes from " + bundleDir);
-
-  // Inject the bundled injected-bundle only on the bundled path: pairing a
-  // bundled bundle with a system web process risks an ABI mismatch.
-  if (g_file_test((bundleDir + "/libWPEInjectedBundle.so").c_str(), G_FILE_TEST_EXISTS)) {
-    g_setenv("WEBKIT_INJECTED_BUNDLE_PATH", bundleDir.c_str(), FALSE);
-    debugLog("Using bundled WPE injected bundle from " + bundleDir);
-  }
+  debugLog("Using bundled WPE runtime (helpers + injected bundle) from " +
+           bundleDir);
 }
 
 }  // namespace flutter_inappwebview_plugin

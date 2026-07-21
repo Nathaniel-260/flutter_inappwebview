@@ -494,16 +494,19 @@ into the library as absolute paths (`PKGLIBEXECDIR`, `PKGLIBDIR`). Bundling only
 the libraries is therefore not enough for a machine without WPE installed — the
 app fails with `Failed to spawn child process '.../WPENetworkProcess'`.
 
-When available at build time, the plugin also bundles these files into `lib/`:
+When available at build time, the plugin also bundles these files into `lib/`.
+The set is located under a single install prefix and staged all-or-nothing, so
+components of different WPE installs/versions are never mixed:
 
 - `WPEWebProcess`, `WPENetworkProcess` (and `WPEGPUProcess` if present) - helper processes
 - `libWPEInjectedBundle.so` - injected bundle
 
 At startup, before any WebView is created, the plugin resolves its own directory
 (via `dladdr`), restores the execute bit on the helper processes (an app's
-`install(FILES)` step drops it), and — only when both helper processes are
-present and runnable — points WebKit at the bundled copies via environment
-variables:
+`install(FILES)` step drops it), and — only when the full set (both helper
+processes runnable + the injected bundle, plus `WPEGPUProcess` runnable when it
+exists) is present — points WebKit at the bundled copies via environment
+variables, set together as one unit:
 
 - `WEBKIT_EXEC_PATH` (helper processes) - **only honored when `libWPEWebKit` was
   built with `-DDEVELOPER_MODE=ON`.** A stock distro (Debian/Ubuntu) release
@@ -515,9 +518,26 @@ variables:
   the bundled path** (i.e. alongside the bundled helper processes). Pairing a
   bundled injected bundle with a system web process could cause an ABI mismatch.
 
-If the helper processes are missing/non-executable at runtime, or the paths are
+If any part of the set is missing/non-executable at runtime, or the paths are
 already set, the plugin falls back silently to the system WPE install (existing
-behavior) and leaves the injected bundle untouched.
+behavior) and sets none of the variables.
+
+### Scope: what the plugin does NOT bundle
+
+The plugin stages only the WPE-specific runtime pieces (helper processes,
+injected bundle, and the `.so` files listed above). It does **not** close the
+transitive shared-library dependencies of `libWPEWebKit` (ICU, libsoup,
+image/media codecs, ...), whose sonames differ between distros. A truly
+self-contained app must handle that closure in its packaging step — e.g. an
+`ldd`-based copy of non-host libraries into the bundle `lib/` dir (see the
+Otzaria CI for a working example) — or ship on a base image where those
+dependencies are guaranteed.
+
+Consumers must also install the helper processes with the execute bit
+preserved: use `install(PROGRAMS ...)` (not `install(FILES ...)`) for
+`WPE*Process` files in the app's `linux/CMakeLists.txt` (see
+`example/linux/CMakeLists.txt`). The runtime `chmod` fallback cannot fix a
+package installed root-owned (DEB/RPM) when the app runs as a regular user.
 
 ## Architecture
 

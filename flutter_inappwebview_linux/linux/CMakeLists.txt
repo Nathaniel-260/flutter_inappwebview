@@ -389,49 +389,74 @@ endif()
 pkg_get_variable(WPE_WEBKIT_PREFIX "${WPE_WEBKIT_PC_MODULE}" prefix)
 pkg_get_variable(WPE_WEBKIT_LIBDIR "${WPE_WEBKIT_PC_MODULE}" libdir)
 
-# Candidate directories for the helper processes (PKGLIBEXECDIR varies by distro).
-set(WPE_LIBEXEC_CANDIDATES "")
-foreach(BASE "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/libexec" "${WPE_WEBKIT_PREFIX}/lib"
-             "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/libexec" "/usr/lib")
-  if(BASE)
-    list(APPEND WPE_LIBEXEC_CANDIDATES "${BASE}/wpe-webkit-${WPE_API_VERSION}" "${BASE}")
-  endif()
-endforeach()
-list(REMOVE_DUPLICATES WPE_LIBEXEC_CANDIDATES)
-
-# Helper to find an installed file across candidate dirs and add it to the bundle list.
-# Pass OPTIONAL as a 4th argument for files whose absence does not disable bundling.
-function(find_and_add_file FILE_NAME SEARCH_PATHS OUT_LIST)
-  foreach(SEARCH_PATH ${SEARCH_PATHS})
-    if(EXISTS "${SEARCH_PATH}/${FILE_NAME}")
-      list(APPEND ${OUT_LIST} "${SEARCH_PATH}/${FILE_NAME}")
-      set(${OUT_LIST} ${${OUT_LIST}} PARENT_SCOPE)
-      message(STATUS "flutter_inappwebview_linux: Will bundle ${SEARCH_PATH}/${FILE_NAME}")
-      return()
+# Probes ONE install prefix (its base dirs are passed as ARGN) for the complete
+# WPE runtime set: WPEWebProcess + WPENetworkProcess + libWPEInjectedBundle.so
+# (WPEGPUProcess optional). All-or-nothing per prefix, so components of
+# different WPE installs/versions are never mixed in the app bundle.
+function(wpe_probe_runtime_set OUT_FILES OUT_COMPLETE)
+  set(exec_dirs "")
+  set(bundle_dirs "")
+  foreach(BASE ${ARGN})
+    if(BASE)
+      list(APPEND exec_dirs "${BASE}/wpe-webkit-${WPE_API_VERSION}" "${BASE}")
+      list(APPEND bundle_dirs "${BASE}/wpe-webkit-${WPE_API_VERSION}/injected-bundle")
     endif()
   endforeach()
-  if(${ARGC} GREATER 3 AND "${ARGV3}" STREQUAL "OPTIONAL")
-    message(STATUS "flutter_inappwebview_linux: optional ${FILE_NAME} not found; skipping")
+  list(REMOVE_DUPLICATES exec_dirs)
+  list(REMOVE_DUPLICATES bundle_dirs)
+
+  set(files "")
+  set(complete TRUE)
+  foreach(PROC "WPEWebProcess" "WPENetworkProcess" "WPEGPUProcess")
+    set(found "")
+    foreach(DIR ${exec_dirs})
+      if(EXISTS "${DIR}/${PROC}")
+        set(found "${DIR}/${PROC}")
+        break()
+      endif()
+    endforeach()
+    if(found)
+      list(APPEND files "${found}")
+    elseif(NOT PROC STREQUAL "WPEGPUProcess")
+      set(complete FALSE)
+    endif()
+  endforeach()
+
+  set(found "")
+  foreach(DIR ${bundle_dirs})
+    if(EXISTS "${DIR}/libWPEInjectedBundle.so")
+      set(found "${DIR}/libWPEInjectedBundle.so")
+      break()
+    endif()
+  endforeach()
+  if(found)
+    list(APPEND files "${found}")
   else()
-    message(STATUS "flutter_inappwebview_linux: ${FILE_NAME} not found; app will fall back to system WPE")
+    set(complete FALSE)
   endif()
+
+  set(${OUT_FILES} "${files}" PARENT_SCOPE)
+  set(${OUT_COMPLETE} "${complete}" PARENT_SCOPE)
 endfunction()
 
-# Helper processes. WPEGPUProcess only exists when the GPU process is enabled.
-find_and_add_file("WPEWebProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
-find_and_add_file("WPENetworkProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS)
-find_and_add_file("WPEGPUProcess" "${WPE_LIBEXEC_CANDIDATES}" WPE_BUNDLED_LIBS OPTIONAL)
+# Prefer the prefix the .pc file points at; fall back to the system prefix.
+wpe_probe_runtime_set(WPE_BUNDLED_LIBS WPE_RUNTIME_SET_COMPLETE
+  "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/libexec" "${WPE_WEBKIT_PREFIX}/lib")
+if(NOT WPE_RUNTIME_SET_COMPLETE)
+  wpe_probe_runtime_set(WPE_BUNDLED_LIBS WPE_RUNTIME_SET_COMPLETE
+    "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/libexec" "/usr/lib")
+endif()
 
-# Injected bundle (libWPEInjectedBundle.so) lives in PKGLIBDIR/injected-bundle.
-set(WPE_INJECTED_BUNDLE_CANDIDATES "")
-foreach(BASE "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/lib"
-             "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/lib")
-  if(BASE)
-    list(APPEND WPE_INJECTED_BUNDLE_CANDIDATES "${BASE}/wpe-webkit-${WPE_API_VERSION}/injected-bundle")
-  endif()
-endforeach()
-list(REMOVE_DUPLICATES WPE_INJECTED_BUNDLE_CANDIDATES)
-find_and_add_file("libWPEInjectedBundle.so" "${WPE_INJECTED_BUNDLE_CANDIDATES}" WPE_BUNDLED_LIBS)
+if(WPE_RUNTIME_SET_COMPLETE)
+  foreach(BUNDLED_FILE ${WPE_BUNDLED_LIBS})
+    message(STATUS "flutter_inappwebview_linux: Will bundle ${BUNDLED_FILE}")
+  endforeach()
+else()
+  # Partial sets are discarded: wpe_bundle_paths.cc activates the bundled path
+  # only when the full set is present, so shipping a partial one is dead weight.
+  set(WPE_BUNDLED_LIBS "")
+  message(STATUS "flutter_inappwebview_linux: complete WPE runtime set not found; app will fall back to system WPE")
+endif()
 
 set(flutter_inappwebview_linux_bundled_libraries
   ${WPE_BUNDLED_LIBS}
