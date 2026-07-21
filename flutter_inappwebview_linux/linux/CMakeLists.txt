@@ -440,21 +440,23 @@ function(wpe_probe_runtime_set OUT_FILES OUT_COMPLETE)
 endfunction()
 
 # Prefer the prefix the .pc file points at; fall back to the system prefix.
-wpe_probe_runtime_set(WPE_BUNDLED_LIBS WPE_RUNTIME_SET_COMPLETE
+wpe_probe_runtime_set(WPE_RUNTIME_SET WPE_RUNTIME_SET_COMPLETE
   "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/libexec" "${WPE_WEBKIT_PREFIX}/lib")
 if(NOT WPE_RUNTIME_SET_COMPLETE)
-  wpe_probe_runtime_set(WPE_BUNDLED_LIBS WPE_RUNTIME_SET_COMPLETE
+  wpe_probe_runtime_set(WPE_RUNTIME_SET WPE_RUNTIME_SET_COMPLETE
     "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/libexec" "/usr/lib")
 endif()
 
+# Append to WPE_BUNDLED_LIBS — the core .so libraries were already collected
+# above and must always ship, with or without the helper-process set.
 if(WPE_RUNTIME_SET_COMPLETE)
-  foreach(BUNDLED_FILE ${WPE_BUNDLED_LIBS})
+  list(APPEND WPE_BUNDLED_LIBS ${WPE_RUNTIME_SET})
+  foreach(BUNDLED_FILE ${WPE_RUNTIME_SET})
     message(STATUS "flutter_inappwebview_linux: Will bundle ${BUNDLED_FILE}")
   endforeach()
 else()
   # Partial sets are discarded: wpe_bundle_paths.cc activates the bundled path
   # only when the full set is present, so shipping a partial one is dead weight.
-  set(WPE_BUNDLED_LIBS "")
   message(STATUS "flutter_inappwebview_linux: complete WPE runtime set not found; app will fall back to system WPE")
 endif()
 
