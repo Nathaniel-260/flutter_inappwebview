@@ -352,6 +352,12 @@ endif()
 if(HAVE_WPE_FDO AND WPE_FDO_LIBRARY_DIRS)
   list(APPEND WPE_LIB_DIRS ${WPE_FDO_LIBRARY_DIRS})
 endif()
+if(HAVE_WPE_PLATFORM AND WPE_PLATFORM_LIBRARY_DIRS)
+  list(APPEND WPE_LIB_DIRS ${WPE_PLATFORM_LIBRARY_DIRS})
+endif()
+if(HAVE_WPE_PLATFORM AND WPE_PLATFORM_HEADLESS_LIBRARY_DIRS)
+  list(APPEND WPE_LIB_DIRS ${WPE_PLATFORM_HEADLESS_LIBRARY_DIRS})
+endif()
 # Add common paths as fallback
 list(APPEND WPE_LIB_DIRS 
   "/usr/local/lib"
@@ -367,8 +373,11 @@ find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)
 # Find libwpe library  
 find_and_add_library("libwpe-1.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)
 
-# WPEPlatform is built into libWPEWebKit-2.0 on modern builds, so there are
-# no separate libWPEPlatform*.so files to bundle.
+# WPEPlatform is a separate DT_NEEDED library in current WPE releases (including
+# the 2.48.x SDK used by Otzaria), so it must be bundled explicitly.
+if(HAVE_WPE_PLATFORM)
+  find_and_add_library("libWPEPlatform-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)
+endif()
 
 # Find WPE Backend FDO library (legacy fallback)
 if(HAVE_WPE_FDO)
@@ -439,13 +448,11 @@ function(wpe_probe_runtime_set OUT_FILES OUT_COMPLETE)
   set(${OUT_COMPLETE} "${complete}" PARENT_SCOPE)
 endfunction()
 
-# Prefer the prefix the .pc file points at; fall back to the system prefix.
+# Probe only the installation selected by pkg-config. Falling back independently
+# to /usr could combine libWPEWebKit from a custom SDK with helper processes and
+# an injected bundle from a different system version.
 wpe_probe_runtime_set(WPE_RUNTIME_SET WPE_RUNTIME_SET_COMPLETE
   "${WPE_WEBKIT_LIBDIR}" "${WPE_WEBKIT_PREFIX}/libexec" "${WPE_WEBKIT_PREFIX}/lib")
-if(NOT WPE_RUNTIME_SET_COMPLETE)
-  wpe_probe_runtime_set(WPE_RUNTIME_SET WPE_RUNTIME_SET_COMPLETE
-    "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" "/usr/libexec" "/usr/lib")
-endif()
 
 # Append to WPE_BUNDLED_LIBS — the core .so libraries were already collected
 # above and must always ship, with or without the helper-process set.

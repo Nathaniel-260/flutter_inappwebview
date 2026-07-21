@@ -480,7 +480,7 @@ The following files are automatically copied to your app's `lib/` directory:
 - `libwpe-1.0.so.*` - libwpe library
 
 **With WPEPlatform (default):**
-- WPEPlatform is built into `libWPEWebKit-2.0.so`, so no additional libraries are needed.
+- `libWPEPlatform-2.0.so.*` - the WPEPlatform runtime linked by the plugin
 
 **With WPEBackend-FDO (legacy):**
 - `libWPEBackend-fdo-1.0.so.*` - FDO backend library
@@ -495,8 +495,10 @@ the libraries is therefore not enough for a machine without WPE installed — th
 app fails with `Failed to spawn child process '.../WPENetworkProcess'`.
 
 When available at build time, the plugin also bundles these files into `lib/`.
-The set is located under a single install prefix and staged all-or-nothing, so
-components of different WPE installs/versions are never mixed:
+The set is located under the exact install prefix selected by the WPE WebKit
+`pkg-config` file and staged all-or-nothing. The plugin deliberately does not
+fall back independently to `/usr`, because that could combine a custom
+`libWPEWebKit` with system helper processes from another version:
 
 - `WPEWebProcess`, `WPENetworkProcess` (and `WPEGPUProcess` if present) - helper processes
 - `libWPEInjectedBundle.so` - injected bundle
@@ -525,7 +527,8 @@ behavior) and sets none of the variables.
 ### Scope: what the plugin does NOT bundle
 
 The plugin stages only the WPE-specific runtime pieces (helper processes,
-injected bundle, and the `.so` files listed above). It does **not** close the
+injected bundle, and the `.so` files listed above, including WPEPlatform). It
+does **not** close the
 transitive shared-library dependencies of `libWPEWebKit` (ICU, libsoup,
 image/media codecs, ...), whose sonames differ between distros. A truly
 self-contained app must handle that closure in its packaging step — e.g. an
@@ -538,6 +541,14 @@ preserved: use `install(PROGRAMS ...)` (not `install(FILES ...)`) for
 `WPE*Process` files in the app's `linux/CMakeLists.txt` (see
 `example/linux/CMakeLists.txt`). The runtime `chmod` fallback cannot fix a
 package installed root-owned (DEB/RPM) when the app runs as a regular user.
+
+The runtime path variables are process-wide environment variables. GLib does
+not guarantee that environment mutation is thread-safe on Unix, so applications
+that require strict thread-safety should set `WEBKIT_EXEC_PATH`,
+`WEBKIT_INJECTED_BUNDLE_PATH`, and the helper library search path in their native
+launcher before starting the Flutter engine. The plugin registration fallback
+is intentionally early and idempotent, but cannot make process-wide environment
+updates atomic with unrelated application threads.
 
 ## Architecture
 
