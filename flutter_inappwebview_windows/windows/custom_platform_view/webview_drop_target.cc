@@ -11,6 +11,32 @@ namespace flutter_inappwebview_plugin
   // One drop target per Flutter view window; all access is on the UI thread.
   static std::map<HWND, WebViewDropTarget*> g_targets;
 
+  // Drags carrying OS files are refused before reaching WebView2: a file
+  // dropped on browser UI (e.g. print preview) bypasses every page-level and
+  // navigation guard and opens the file in a new window.
+  static bool dataObjectContainsFiles(IDataObject* dataObject)
+  {
+    if (!dataObject) {
+      return false;
+    }
+    FORMATETC format = { CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    if (dataObject->QueryGetData(&format) == S_OK) {
+      return true;
+    }
+    // Virtual files (zip entries, Outlook attachments) arrive as file
+    // descriptors instead of CF_HDROP.
+    static const CLIPFORMAT descriptorW =
+      static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"));
+    static const CLIPFORMAT descriptorA =
+      static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor"));
+    format.cfFormat = descriptorW;
+    if (dataObject->QueryGetData(&format) == S_OK) {
+      return true;
+    }
+    format.cfFormat = descriptorA;
+    return dataObject->QueryGetData(&format) == S_OK;
+  }
+
   WebViewDropTarget::WebViewDropTarget(HWND flutterViewHwnd, bool oleInitialized)
     : flutterViewHwnd_(flutterViewHwnd), oleInitialized_(oleInitialized)
   {}
@@ -157,6 +183,7 @@ namespace flutter_inappwebview_plugin
     if (currentDataObject_) {
       currentDataObject_->AddRef();
     }
+    currentDragHasFiles_ = dataObjectContainsFiles(dataObject);
     currentWebView_ = nullptr;
     return DragOver(keyState, point, effect);
   }
@@ -168,6 +195,11 @@ namespace flutter_inappwebview_plugin
     // WebView2 can pick one. Zeroing it here would make WebView2 return NONE
     // and OLE would never call Drop.
     const DWORD allowedEffects = *effect;
+    if (currentDragHasFiles_) {
+      forwardLeave();
+      *effect = DROPEFFECT_NONE;
+      return S_OK;
+    }
     POINT webViewPoint;
     const auto webView = webViewAt(point, &webViewPoint);
     if (webView != currentWebView_) {
@@ -196,6 +228,7 @@ namespace flutter_inappwebview_plugin
   HRESULT WebViewDropTarget::DragLeave()
   {
     forwardLeave();
+    currentDragHasFiles_ = false;
     if (currentDataObject_) {
       currentDataObject_->Release();
       currentDataObject_ = nullptr;
@@ -206,6 +239,16 @@ namespace flutter_inappwebview_plugin
   HRESULT WebViewDropTarget::Drop(IDataObject* dataObject, DWORD keyState,
     POINTL point, DWORD* effect)
   {
+    if (currentDragHasFiles_ || dataObjectContainsFiles(dataObject)) {
+      forwardLeave();
+      currentDragHasFiles_ = false;
+      if (currentDataObject_) {
+        currentDataObject_->Release();
+        currentDataObject_ = nullptr;
+      }
+      *effect = DROPEFFECT_NONE;
+      return S_OK;
+    }
     const DWORD allowedEffects = *effect;
     POINT webViewPoint;
     const auto webView = webViewAt(point, &webViewPoint);

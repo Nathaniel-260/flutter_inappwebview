@@ -59,6 +59,7 @@ namespace flutter_inappwebview_plugin
     std::vector<InAppWebView*> webViews_;
     InAppWebView* currentWebView_ = nullptr;
     IDataObject* currentDataObject_ = nullptr;
+    bool currentDragHasFiles_ = false;
   };
 }
 
