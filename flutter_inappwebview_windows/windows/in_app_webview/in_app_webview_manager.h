@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <variant>
+#include <vector>
 #include <wil/com.h>
 #include <winrt/base.h>
 
@@ -57,12 +58,15 @@ namespace flutter_inappwebview_plugin
 
     void createInAppWebView(const flutter::EncodableMap* arguments, std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
     void disposeKeepAlive(const std::string& keepAliveId);
+    void setWindowMinimized(const bool& minimized);
   private:
     inline static rx::RoHelper* rohelper_ = nullptr;
     inline static ABI::Windows::System::IDispatcherQueueController* dispatcher_queue_controller_ = nullptr;
     inline static GraphicsContext* graphics_context_ = nullptr;
     inline static ABI::Windows::UI::Composition::ICompositor* compositor_ = nullptr;
     WNDCLASS windowClass_ = {};
+    std::vector<uint64_t> hiddenOnMinimize_;
+    std::vector<std::string> hiddenKeepAliveOnMinimize_;
     inline static bool valid_ = false;
     inline static std::size_t instance_count_ = 0;
     inline static std::mutex shared_resources_mutex_;
