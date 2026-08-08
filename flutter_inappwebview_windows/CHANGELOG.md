@@ -1,5 +1,8 @@
 ## 0.7.0-beta.3
 
+- Fixed WebView2 input windows intercepting desktop clicks while the Flutter
+  host window is minimized, including WebViews created or resumed during
+  minimization.
 - Updated flutter_inappwebview_platform_interface version to ^1.4.0-beta.3
 - Updated Microsoft.Web.WebView2 SDK version from `1.0.2849.39` to `1.0.3650.58`
 - Implemented `getFrameId`, `getFavicon`, `showSaveAsUI`, `getMemoryUsageTargetLevel`, `setMemoryUsageTargetLevel` InAppWebViewController method
