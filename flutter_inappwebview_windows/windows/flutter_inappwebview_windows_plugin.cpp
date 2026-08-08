@@ -65,6 +65,18 @@ namespace flutter_inappwebview_plugin
   {
     std::optional<LRESULT> result = std::nullopt;
 
+    // A later top-level delegate may consume WM_SIZE on minimize
+    // (window_manager does), preventing Flutter's hidden lifecycle event.
+    // Keep inline WebViews synchronized here while the message is available.
+    if (message == WM_SIZE && inAppWebViewManager) {
+      if (wParam == SIZE_MINIMIZED) {
+        inAppWebViewManager->setWindowMinimized(true);
+      }
+      else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
+        inAppWebViewManager->setWindowMinimized(false);
+      }
+    }
+
     if (platformUtil) {
       result = platformUtil->HandleWindowProc(hWnd, message, wParam, lParam);
     }

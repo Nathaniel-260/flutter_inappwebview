@@ -167,7 +167,9 @@ namespace flutter_inappwebview_plugin
             initialUserScripts
           };
 
-          auto inAppWebView = std::make_unique<InAppWebView>(plugin, params, hwnd, std::move(webViewEnv), std::move(webViewController), std::move(webViewCompositionController));
+          auto inAppWebView = std::make_unique<InAppWebView>(plugin, params, hwnd,
+            std::move(webViewEnv), std::move(webViewController),
+            std::move(webViewCompositionController), windowMinimized_);
           if (!inAppWebView->webView || !inAppWebView->surface()) {
             result_->Error("0", "Cannot create the InAppWebView surface!");
             return;
@@ -226,6 +228,33 @@ namespace flutter_inappwebview_plugin
         platformView->UnregisterMethodCallHandler();
       }
       keepAliveWebViews.erase(keepAliveId);
+    }
+  }
+
+  // WebView2 keeps its own top-level input window (class Chrome_WidgetWin_1,
+  // owned by no window) over the widget area. It has no redirection bitmap, so
+  // it is invisible - but it still hit-tests, and minimizing the app leaves it
+  // on screen swallowing every mouse click over the region the app occupied.
+  // Hiding the controller hides that window. Each WebView keeps its requested
+  // pause state separate from this temporary host-window state, so resume()
+  // cannot expose it while minimized and restore cannot expose a paused view.
+  void InAppWebViewManager::setWindowMinimized(const bool minimized)
+  {
+    windowMinimized_ = minimized;
+
+    const auto applyWindowState = [minimized](const std::unique_ptr<CustomPlatformView>& platformView)
+      {
+        const auto webView = platformView ? platformView->view.get() : nullptr;
+        if (webView) {
+          webView->setHostWindowMinimized(minimized);
+        }
+      };
+
+    for (const auto& [id, platformView] : webViews) {
+      applyWindowState(platformView);
+    }
+    for (const auto& [keepAliveId, platformView] : keepAliveWebViews) {
+      applyWindowState(platformView);
     }
   }
 
