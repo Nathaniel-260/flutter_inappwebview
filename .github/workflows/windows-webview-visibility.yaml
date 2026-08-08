@@ -41,12 +41,9 @@ jobs:
           cmake -S windows -B build/windows/x64
           -Dinclude_flutter_inappwebview_windows_tests=TRUE
 
-      - name: Build plugin and native tests
+      - name: Build example and native tests
         working-directory: flutter_inappwebview_windows/example
-        run: >-
-          cmake --build build/windows/x64 --config Debug --parallel
-          --target flutter_inappwebview_windows_plugin
-          flutter_inappwebview_windows_test
+        run: cmake --build build/windows/x64 --config Debug --parallel
 
       - name: Run native tests
         working-directory: flutter_inappwebview_windows/example
