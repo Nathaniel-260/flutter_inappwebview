@@ -56,6 +56,9 @@ add_subdirectory("runner")
 # explicitly after Flutter generates the Windows build directory.
 option(include_flutter_inappwebview_windows_tests
   "Build flutter_inappwebview_windows native tests" OFF)
+if(include_flutter_inappwebview_windows_tests)
+  enable_testing()
+endif()
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.

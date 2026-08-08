@@ -47,4 +47,6 @@ jobs:
 
       - name: Run native tests
         working-directory: flutter_inappwebview_windows/example
-        run: ctest --test-dir build/windows/x64 -C Debug --output-on-failure
+        run: >-
+          ctest --test-dir build/windows/x64 -C Debug
+          --output-on-failure --no-tests=error
