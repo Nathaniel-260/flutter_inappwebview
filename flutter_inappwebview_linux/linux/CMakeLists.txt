@@ -90,6 +90,9 @@ if(WPE_PLATFORM_FOUND AND WPE_PLATFORM_HEADLESS_FOUND)
   list(REMOVE_DUPLICATES _wpe_probe_ldirs)
   list(TRANSFORM _wpe_probe_ldirs PREPEND "-L")
   set(CMAKE_REQUIRED_LINK_OPTIONS ${_wpe_probe_ldirs})
+  # Don't require libWPEWebKit's own DT_NEEDED deps (e.g. a bookworm-built SDK
+  # wants icu72) to resolve on the build host — the probe only asks about the API.
+  list(APPEND CMAKE_REQUIRED_LINK_OPTIONS "-Wl,--allow-shlib-undefined")
   set(CMAKE_REQUIRED_LIBRARIES ${WPE_WEBKIT_LINK_LIBRARIES} ${WPE_PLATFORM_LINK_LIBRARIES})
   message(STATUS "flutter_inappwebview_linux: probe ldirs=[${_wpe_probe_ldirs}] libs=[${WPE_WEBKIT_LINK_LIBRARIES}]")
   check_cxx_source_compiles("
