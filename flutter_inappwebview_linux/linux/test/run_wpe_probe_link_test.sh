@@ -33,7 +33,7 @@ printf 'extern int fake_wpe_api(void); int main(void) { return fake_wpe_api(); }
   "$cc_bin" -x c - -L"$sdk_dir" -Wl,-rpath-link,"$deps_dir" -lFakeWPE \
     -o "$fixture_dir/with-rpath-link"
 
-if grep -q -- '--allow-shlib-undefined' "${BASH_SOURCE[0]%/test/*}/CMakeLists.txt"; then
+if grep -Fq -- '"-Wl,--allow-shlib-undefined"' "${BASH_SOURCE[0]%/test/*}/CMakeLists.txt"; then
   echo "WPE probe must validate DT_NEEDED dependencies rather than ignore them" >&2
   exit 1
 fi
