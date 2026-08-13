@@ -7,6 +7,7 @@ on:
       - ".github/workflows/linux-wpe-bundle.yaml"
   push:
     branches:
+      - master
       - fix/linux-wpe-self-contained
     paths:
       - "flutter_inappwebview_linux/**"
