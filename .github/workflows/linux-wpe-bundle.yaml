@@ -7,6 +7,7 @@ on:
       - ".github/workflows/linux-wpe-bundle.yaml"
   push:
     branches:
+      - master
       - fix/linux-wpe-self-contained
     paths:
       - "flutter_inappwebview_linux/**"
@@ -26,5 +27,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev pkg-config
       - name: Check patch whitespace
         run: git diff --check HEAD^
+      - name: Test WPEPlatform SDK dependency probe
+        run: flutter_inappwebview_linux/linux/test/run_wpe_probe_link_test.sh
       - name: Test bundled WPE runtime path selection
         run: flutter_inappwebview_linux/linux/test/run_wpe_bundle_paths_test.sh

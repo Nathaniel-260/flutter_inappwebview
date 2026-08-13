@@ -83,14 +83,39 @@ if(WPE_PLATFORM_FOUND AND WPE_PLATFORM_HEADLESS_FOUND)
   # The pkg-config file may exist but WebKit headers may not have the required functions
   # This happens when WPE WebKit is rebuilt without WPEPlatform support
   include(CheckCXXSourceCompiles)
+  include(CMakePushCheckState)
+  # The CMAKE_REQUIRED_* variables are process-wide. Keep this probe's include
+  # paths, libraries, and linker search paths from affecting later checks.
+  cmake_push_check_state(RESET)
   set(CMAKE_REQUIRED_INCLUDES ${WPE_WEBKIT_INCLUDE_DIRS} ${WPE_PLATFORM_INCLUDE_DIRS})
-  # The probe must get -L for non-system prefixes (e.g. /opt/wpe-sdk), otherwise
-  # the link fails and WPEPlatform is wrongly reported missing.
-  set(_wpe_probe_ldirs ${WPE_WEBKIT_LIBRARY_DIRS} ${WPE_PLATFORM_LIBRARY_DIRS})
+  # The probe must find direct libraries and their DT_NEEDED dependencies in a
+  # non-system SDK prefix (e.g. /opt/wpe-sdk). -rpath-link is link-time only:
+  # unlike --allow-shlib-undefined, it does not hide a dependency that will be
+  # missing from the application bundle at runtime.
+  set(_wpe_probe_ldirs
+    ${WPE_WEBKIT_LIBRARY_DIRS}
+    ${WPE_PLATFORM_LIBRARY_DIRS}
+    ${WPE_PLATFORM_HEADLESS_LIBRARY_DIRS})
   list(REMOVE_DUPLICATES _wpe_probe_ldirs)
-  list(TRANSFORM _wpe_probe_ldirs PREPEND "-L")
-  set(CMAKE_REQUIRED_LINK_OPTIONS ${_wpe_probe_ldirs})
-  set(CMAKE_REQUIRED_LIBRARIES ${WPE_WEBKIT_LINK_LIBRARIES} ${WPE_PLATFORM_LINK_LIBRARIES})
+  set(_wpe_probe_link_options "")
+  foreach(_wpe_probe_ldir ${_wpe_probe_ldirs})
+    list(APPEND _wpe_probe_link_options
+      "-L${_wpe_probe_ldir}"
+      "-Wl,-rpath-link,${_wpe_probe_ldir}")
+  endforeach()
+  # CMAKE_REQUIRED_LINK_OPTIONS was added in CMake 3.14, while this plugin
+  # supports CMake 3.10. Older CMake versions accept the same driver options
+  # through CMAKE_REQUIRED_FLAGS.
+  if(CMAKE_VERSION VERSION_LESS "3.14")
+    string(REPLACE ";" " " _wpe_probe_required_flags "${_wpe_probe_link_options}")
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${_wpe_probe_required_flags}")
+  else()
+    set(CMAKE_REQUIRED_LINK_OPTIONS ${_wpe_probe_link_options})
+  endif()
+  set(CMAKE_REQUIRED_LIBRARIES
+    ${WPE_WEBKIT_LINK_LIBRARIES}
+    ${WPE_PLATFORM_LINK_LIBRARIES}
+    ${WPE_PLATFORM_HEADLESS_LINK_LIBRARIES})
   message(STATUS "flutter_inappwebview_linux: probe ldirs=[${_wpe_probe_ldirs}] libs=[${WPE_WEBKIT_LINK_LIBRARIES}]")
   check_cxx_source_compiles("
     #include <wpe/webkit.h>
@@ -100,6 +125,7 @@ if(WPE_PLATFORM_FOUND AND WPE_PLATFORM_HEADLESS_FOUND)
       return 0;
     }
   " WEBKIT_HAS_WPE_PLATFORM_API)
+  cmake_pop_check_state()
   
   if(WEBKIT_HAS_WPE_PLATFORM_API)
     message(STATUS "flutter_inappwebview_linux: Found wpe-platform-2.0 (WPEPlatform API - DEFAULT)")
