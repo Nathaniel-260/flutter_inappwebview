@@ -2,6 +2,8 @@
 #define FLUTTER_INAPPWEBVIEW_PLUGIN_WEBVIEW_DROP_TARGET_H_
 
 #include <ole2.h>
+#include <functional>
+#include <string>
 #include <vector>
 
 namespace flutter_inappwebview_plugin
@@ -23,12 +25,30 @@ namespace flutter_inappwebview_plugin
   class WebViewDropTarget : public IDropTarget
   {
   public:
+    // Reported to the host for a drag carrying OS files. [event] is one of
+    // "enter" / "over" / "leave" / "drop"; [x],[y] are client coordinates.
+    using FileDropSink = std::function<void(const std::string& event,
+      const std::vector<std::string>& paths, double x, double y)>;
+
     // Registers [webView] for drag routing under [flutterViewHwnd], creating
     // and installing a drop target for that window on first use.
     static void RegisterWebView(HWND flutterViewHwnd, InAppWebView* webView);
     // Removes [webView] from whichever window owns it; revokes and destroys
     // that window's drop target once it has no webviews left.
     static void UnregisterWebView(InAppWebView* webView);
+
+    // Claims OS file drags on [flutterViewHwnd] for the host. Only one IDropTarget
+    // may exist per window, so the host cannot register its own alongside this
+    // one - it routes them through here instead. Keeps the target alive even
+    // while no webview exists.
+    static void SetFileDropSink(HWND flutterViewHwnd, FileDropSink sink);
+    // Stops reporting file drags, restoring the plain-refusal behaviour.
+    static void ClearFileDropSink(HWND flutterViewHwnd);
+
+    // The host's answer to the last reported drag: whether it would accept a
+    // drop here. Drives the drag cursor, so the host must answer while the
+    // drag is still moving. Resets to refused on every new drag.
+    static void SetFileDropAccepted(HWND flutterViewHwnd, bool accepted);
 
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
@@ -48,8 +68,18 @@ namespace flutter_inappwebview_plugin
     explicit WebViewDropTarget(HWND flutterViewHwnd, bool oleInitialized);
     ~WebViewDropTarget() = default;
 
+    // Creates and registers the window's target on first use, or returns the
+    // existing one. Null when RegisterDragDrop failed.
+    static WebViewDropTarget* acquire(HWND flutterViewHwnd);
+    // Revokes and destroys the window's target once nothing needs it.
+    static void releaseIfUnused(HWND flutterViewHwnd);
+
+    bool toClient(POINTL screenPoint, double* x, double* y) const;
     InAppWebView* webViewAt(POINTL screenPoint, POINT* webViewPoint) const;
     void forwardLeave();
+    // Emits [event] to the file drop sink; paths are read for "enter"/"drop" only.
+    HRESULT reportFileDrag(const char* event, IDataObject* dataObject,
+      POINTL point, DWORD* effect);
 
     HWND flutterViewHwnd_;
     // Whether this target's own OleInitialize succeeded and must be balanced
@@ -60,6 +90,8 @@ namespace flutter_inappwebview_plugin
     InAppWebView* currentWebView_ = nullptr;
     IDataObject* currentDataObject_ = nullptr;
     bool currentDragHasFiles_ = false;
+    FileDropSink fileDropSink_;
+    bool fileDropAccepted_ = false;
   };
 }
 

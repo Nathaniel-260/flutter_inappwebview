@@ -248,6 +248,8 @@ list(APPEND PLUGIN_SOURCES
   "cookie_manager.cpp"
   "cookie_manager.h"
   "platform_util.cpp"
+  "file_drop/file_drop_manager.h"
+  "file_drop/file_drop_manager.cpp"
   "platform_util.h"
 )
 
