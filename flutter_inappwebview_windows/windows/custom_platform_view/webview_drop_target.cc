@@ -60,8 +60,13 @@ namespace flutter_inappwebview_plugin
         if (length == 0) {
           continue;
         }
-        std::wstring path(length, L'\0');
-        if (DragQueryFileW(drop, i, path.data(), length + 1) > 0) {
+        // DragQueryFileW writes a terminating NUL in addition to the path
+        // characters returned by the length query.
+        std::wstring path(length + 1, L'\0');
+        const auto copied = DragQueryFileW(drop, i, path.data(),
+          static_cast<UINT>(path.size()));
+        if (copied > 0 && copied <= length) {
+          path.resize(copied);
           paths.push_back(wide_to_utf8(path));
         }
       }
@@ -268,7 +273,10 @@ namespace flutter_inappwebview_plugin
       : std::vector<std::string>(), x, y);
     // The host answers asynchronously, so this reflects the previous report -
     // one drag event of lag, which the continuous DragOver stream absorbs.
-    *effect = fileDropAccepted_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+    // A target may only select an effect offered by the drag source. The host
+    // consumes a file as a copy, so reject sources that do not permit COPY.
+    *effect = fileDropAccepted_ && (*effect & DROPEFFECT_COPY)
+      ? DROPEFFECT_COPY : DROPEFFECT_NONE;
     return S_OK;
   }
 
