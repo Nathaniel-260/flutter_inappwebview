@@ -261,6 +261,11 @@ namespace flutter_inappwebview_plugin
       return aliveToken_;
     }
 
+    // Delivers a pending visibility flip / Resume / TrySuspend, or defers it
+    // through the shared per-browser-process gate while that process's UI
+    // thread is not answering. Re-entered by the gate's retry timer.
+    void applyPendingBrowserState();
+
     static bool isSslError(const COREWEBVIEW2_WEB_ERROR_STATUS& webErrorStatus);
   private:
     // custom_platform_view
@@ -290,9 +295,20 @@ namespace flutter_inappwebview_plugin
     std::map<std::string, std::shared_ptr<PrintJobController>> printJobControllers_;
     std::shared_ptr<int> aliveToken_ = std::make_shared<int>(0);
 
+    // put_IsVisible and Resume are synchronous IPC served by the browser
+    // process UI thread; issuing them while it is not pumping (suspended,
+    // starved after long backgrounding) blocks the host platform thread for
+    // as long as that thread takes to wake.
+    bool pendingSuspend_ = false;
+    bool pendingResume_ = false;
+    // Queried once and reused; refreshed only after the browser process exits,
+    // so no per-flip round-trip depends on it.
+    DWORD browserProcessId_ = 0;
+
     void registerEventHandlers();
     void registerSurfaceEventHandlers();
-    bool updateControllerVisibility() const;
+    DWORD cachedBrowserProcessId();
+    void invalidateBrowserProcessCache();
     HRESULT onCallJsHandler(const bool& isMainFrame, ICoreWebView2WebMessageReceivedEventArgs* args);
   };
 }

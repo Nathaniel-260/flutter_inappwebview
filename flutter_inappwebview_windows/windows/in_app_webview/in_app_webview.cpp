@@ -49,6 +49,7 @@
 #include "../web_notification/web_notification_controller.h"
 #include "../print_job/print_job_controller.h"
 #include "../print_job/print_job_manager.h"
+#include "browser_process_gate.h"
 #include "in_app_webview.h"
 #include "in_app_webview_manager.h"
 
@@ -76,7 +77,7 @@ namespace flutter_inappwebview_plugin
       registerSurfaceEventHandlers();
     }
     else {
-      updateControllerVisibility();
+      applyPendingBrowserState();
       // Resize WebView to fit the bounds of the parent window
       RECT bounds;
       GetClientRect(parentWindow, &bounds);
@@ -1077,6 +1078,7 @@ namespace flutter_inappwebview_plugin
           COREWEBVIEW2_PROCESS_FAILED_KIND kind;
           if (succeededOrLog(args->get_ProcessFailedKind(&kind))) {
             if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
+              invalidateBrowserProcessCache();
               auto didCrash = reason == COREWEBVIEW2_PROCESS_FAILED_REASON_CRASHED;
               auto detail = std::make_unique<RenderProcessGoneDetail>(
                 didCrash
@@ -3247,49 +3249,192 @@ namespace flutter_inappwebview_plugin
   }
 
 
-  bool InAppWebView::updateControllerVisibility() const
+  namespace
   {
-    if (!webViewController) {
-      return false;
+    constexpr UINT kBrowserProbeTimeoutMs = 50;
+    constexpr UINT kBrowserStateRetryIntervalMs = 250;
+
+    // Probe-window and retry-timer bookkeeping, keyed by browser process id.
+    // Platform-thread only, like every other call into this file.
+    std::map<unsigned long, HWND> gBrowserProbeWindows;
+    std::map<unsigned long, UINT_PTR> gGateRetryTimers;
+    std::map<UINT_PTR, unsigned long> gGateTimerPids;
+
+    HWND findBrowserProbeWindow(const unsigned long pid)
+    {
+      struct FindContext { unsigned long pid; HWND found; } context = { pid, nullptr };
+      EnumWindows([](HWND hwnd, LPARAM lparam) -> BOOL
+        {
+          auto* const ctx = reinterpret_cast<FindContext*>(lparam);
+          DWORD windowPid = 0;
+          GetWindowThreadProcessId(hwnd, &windowPid);
+          if (windowPid != ctx->pid) {
+            return TRUE;
+          }
+          wchar_t className[64] = L"";
+          GetClassNameW(hwnd, className, 64);
+          if (wcsncmp(className, L"Chrome_WidgetWin", 16) == 0) {
+            ctx->found = hwnd;
+            return FALSE;
+          }
+          return TRUE;
+        }, reinterpret_cast<LPARAM>(&context));
+      return context.found;
     }
-    return succeededOrLog(webViewController->put_IsVisible(
-      visibilityState_.shouldBeVisible() ? TRUE : FALSE));
+
+    // Bounded by kBrowserProbeTimeoutMs. A missing probe window means the
+    // gate cannot judge; report responsive so behavior degrades to the old
+    // unconditional (possibly blocking) delivery rather than never delivering.
+    bool probeBrowserProcess(const unsigned long pid)
+    {
+      auto& window = gBrowserProbeWindows[pid];
+      if (window) {
+        DWORD windowPid = 0;
+        GetWindowThreadProcessId(window, &windowPid);
+        if (!IsWindow(window) || windowPid != pid) {
+          window = nullptr;
+        }
+      }
+      if (!window) {
+        window = findBrowserProbeWindow(pid);
+      }
+      if (!window) {
+        return true;
+      }
+      DWORD_PTR ignored = 0;
+      return SendMessageTimeoutW(window, WM_NULL, 0, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, kBrowserProbeTimeoutMs, &ignored) != 0;
+    }
+
+    void CALLBACK GateRetryTimerProc(HWND, UINT, UINT_PTR timerId, DWORD);
+
+    BrowserProcessGateRegistry& browserGate()
+    {
+      static BrowserProcessGateRegistry gate(
+        &probeBrowserProcess,
+        []() -> unsigned long long { return GetTickCount64(); },
+        [](const unsigned long pid)
+        {
+          if (map_contains(gGateRetryTimers, pid)) {
+            return;
+          }
+          const auto timerId = SetTimer(nullptr, 0, kBrowserStateRetryIntervalMs,
+            &GateRetryTimerProc);
+          if (timerId) {
+            gGateRetryTimers[pid] = timerId;
+            gGateTimerPids[timerId] = pid;
+          }
+        },
+        [](const unsigned long pid)
+        {
+          const auto it = gGateRetryTimers.find(pid);
+          if (it == gGateRetryTimers.end()) {
+            return;
+          }
+          KillTimer(nullptr, it->second);
+          gGateTimerPids.erase(it->second);
+          gGateRetryTimers.erase(it);
+        },
+        kBrowserStateRetryIntervalMs);
+      return gate;
+    }
+
+    void CALLBACK GateRetryTimerProc(HWND, UINT, UINT_PTR timerId, DWORD)
+    {
+      const auto it = gGateTimerPids.find(timerId);
+      if (it == gGateTimerPids.end()) {
+        KillTimer(nullptr, timerId);
+        return;
+      }
+      for (const auto waiter : browserGate().takeWaitersIfResponsive(it->second)) {
+        static_cast<InAppWebView*>(waiter)->applyPendingBrowserState();
+      }
+    }
+  }
+
+  DWORD InAppWebView::cachedBrowserProcessId()
+  {
+    if (!browserProcessId_ && webView) {
+      UINT32 pid = 0;
+      if (SUCCEEDED(webView->get_BrowserProcessId(&pid))) {
+        browserProcessId_ = pid;
+      }
+    }
+    return browserProcessId_;
+  }
+
+  void InAppWebView::invalidateBrowserProcessCache()
+  {
+    if (browserProcessId_) {
+      browserGate().invalidate(browserProcessId_);
+      gBrowserProbeWindows.erase(browserProcessId_);
+    }
+    browserProcessId_ = 0;
+  }
+
+  void InAppWebView::applyPendingBrowserState()
+  {
+    if (webViewController &&
+      (visibilityState_.needsApply() || pendingResume_ || pendingSuspend_)) {
+      const auto browserPid = cachedBrowserProcessId();
+      if (browserPid && !browserGate().tryAcquire(browserPid, this)) {
+        return;
+      }
+      if (pendingResume_) {
+        pendingResume_ = false;
+        wil::com_ptr<ICoreWebView2_3> webView3;
+        if (webView && SUCCEEDED(webView->QueryInterface(IID_PPV_ARGS(&webView3)))) {
+          failedLog(webView3->Resume());
+        }
+      }
+      if (visibilityState_.needsApply()) {
+        if (succeededOrLog(webViewController->put_IsVisible(
+          visibilityState_.shouldBeVisible() ? TRUE : FALSE))) {
+          visibilityState_.markApplied();
+        }
+        else {
+          pendingSuspend_ = false;
+        }
+      }
+      if (pendingSuspend_) {
+        pendingSuspend_ = false;
+        if (!visibilityState_.shouldBeVisible() && !visibilityState_.needsApply()) {
+          wil::com_ptr<ICoreWebView2_3> webView3;
+          if (webView && SUCCEEDED(webView->QueryInterface(IID_PPV_ARGS(&webView3)))) {
+            failedLog(webView3->TrySuspend(Callback<ICoreWebView2TrySuspendCompletedHandler>(
+              [this](HRESULT errorCode, BOOL isSuccessful) -> HRESULT
+              {
+                failedLog(errorCode);
+                return S_OK;
+              })
+              .Get()));
+          }
+        }
+      }
+    }
+    browserGate().removeWaiter(this);
   }
 
   void InAppWebView::setHostWindowMinimized(const bool minimized)
   {
     visibilityState_.setHostWindowMinimized(minimized);
-    updateControllerVisibility();
+    applyPendingBrowserState();
   }
 
   void InAppWebView::pause()
   {
     visibilityState_.setPaused(true);
-    if (!updateControllerVisibility()) {
-      return;
-    }
-
-    wil::com_ptr<ICoreWebView2_3> webView3;
-    if (webView && SUCCEEDED(webView->QueryInterface(IID_PPV_ARGS(&webView3)))) {
-      failedLog(webView3->TrySuspend(Callback<ICoreWebView2TrySuspendCompletedHandler>(
-        [this](HRESULT errorCode, BOOL isSuccessful) -> HRESULT
-        {
-          failedLog(errorCode);
-          return S_OK;
-        })
-        .Get()));
-    }
+    pendingResume_ = false;
+    pendingSuspend_ = true;
+    applyPendingBrowserState();
   }
 
   void InAppWebView::resume()
   {
     visibilityState_.setPaused(false);
-
-    wil::com_ptr<ICoreWebView2_3> webView3;
-    if (webView && SUCCEEDED(webView->QueryInterface(IID_PPV_ARGS(&webView3)))) {
-      failedLog(webView3->Resume());
-    }
-    updateControllerVisibility();
+    pendingSuspend_ = false;
+    pendingResume_ = true;
+    applyPendingBrowserState();
   }
 
 
@@ -4023,6 +4168,7 @@ namespace flutter_inappwebview_plugin
       surface_ = nullptr;
       return false;
     }
+    visibilityState_.markApplied();
 
     // The Flutter view may detach while surface creation is still in flight.
     if (plugin && plugin->registrar) {
@@ -4291,6 +4437,7 @@ namespace flutter_inappwebview_plugin
     // Expire before tearing anything down: a Dart reply arriving from here on
     // must find a dead token and drop the call.
     aliveToken_.reset();
+    browserGate().removeWaiter(this);
     WebViewDropTarget::UnregisterWebView(this);
     userContentController = nullptr;
     if (webView) {
